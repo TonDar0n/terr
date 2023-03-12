@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alnvdl/terr"
+	"github.com/TonDar0n/terr"
 )
 
 func getLocation(depth int) (string, int) {
