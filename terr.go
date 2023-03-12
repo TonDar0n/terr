@@ -3,7 +3,6 @@
 package terr
 
 import (
-	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -33,18 +32,11 @@ type tracedError struct {
 
 // newTracedError builds a traced error for err and its children traced errors
 // (whether passed, wrapped or masked).
-func newTracedError(err error, children []error) error {
-	var terrs []TracedError
-	for _, child := range children {
-		if terr, ok := child.(*tracedError); ok {
-			terrs = append(terrs, terr)
-		}
-	}
-
+func newTracedError(err error, children []TracedError) error {
 	return &tracedError{
 		err:   err,
 		loc:   getLocation(2),
-		terrs: terrs,
+		terrs: children,
 	}
 }
 
@@ -53,29 +45,14 @@ func getLocation(depth int) string {
 	return fmt.Sprintf("%s:%d", file, line)
 }
 
-func filterErrors(objs []interface{}) []error {
-	var errors []error
-	for _, o := range objs {
-		if err, ok := o.(error); ok {
+func filterTracedErrors(objs []any) []TracedError {
+	var errors []TracedError
+	for _, obj := range objs {
+		if err, ok := obj.(TracedError); ok {
 			errors = append(errors, err)
 		}
 	}
 	return errors
-}
-
-// Is returns whether the error is another error for use with errors.Is.
-func (e *tracedError) Is(target error) bool {
-	return errors.Is(e.err, target)
-}
-
-// As returns the error as another error for use with errors.As.
-func (e *tracedError) As(target interface{}) bool {
-	return errors.As(e.err, target)
-}
-
-// Unwrap returns the wrapped error for use with errors.Unwrap.
-func (e *tracedError) Unwrap() error {
-	return errors.Unwrap(e.err)
 }
 
 // Error implements the error interface.
@@ -96,7 +73,7 @@ func (e *tracedError) Children() []TracedError {
 // Format implements fmt.Formatter.
 func (e *tracedError) Format(f fmt.State, verb rune) {
 	if verb == '@' {
-		fmt.Fprint(f, strings.Join(treeRepr(e, 0), "\n"))
+		fmt.Fprint(f, strings.Join(treeRepr(e, 0, 0), "\n"))
 		return
 	}
 	fmt.Fprintf(f, fmt.FormatString(f, verb), e.err)
@@ -104,19 +81,15 @@ func (e *tracedError) Format(f fmt.State, verb rune) {
 
 // treeRepr returns human-readable lines representing an error tree rooted in
 // err.
-func treeRepr(err error, depth int) []string {
+func treeRepr(te TracedError, depth, prevErrLen int) []string {
 	var locations []string
-	te := err.(TracedError)
-	// No need to check the cast was successful: treeRepr is only invoked
-	// internally via tracedError.Format. If that pre-condition is ever
-	// violated, a panic is warranted.
+	errMsg := te.Error()
 	locations = append(locations, fmt.Sprintf("%s%s @ %s",
 		strings.Repeat("\t", depth),
-		te.Error(),
+		errMsg[prevErrLen:],
 		te.Location()))
-	children := te.Children()
-	for _, child := range children {
-		locations = append(locations, treeRepr(child, depth+1)...)
+	for _, child := range te.Children() {
+		locations = append(locations, treeRepr(child, depth+1, len(errMsg))...)
 	}
 	return locations
 }
@@ -126,8 +99,8 @@ func treeRepr(err error, depth int) []string {
 // of the formatting verbs used for these errors.
 // Implements the pattern fmt.Errorf("...", ...). If used without verbs and
 // additional arguments, it also implements the pattern errors.New("...").
-func Newf(format string, a ...interface{}) error {
-	return newTracedError(fmt.Errorf(format, a...), filterErrors(a))
+func Newf(format string, a ...any) error {
+	return newTracedError(fmt.Errorf(format, a...), filterTracedErrors(a))
 }
 
 // Trace returns a new traced error for err. If err is already a traced error,
@@ -137,7 +110,11 @@ func Trace(err error) error {
 	if err == nil {
 		return nil
 	}
-	return newTracedError(err, []error{err})
+	if err, ok := err.(TracedError); ok {
+		return newTracedError(err, []TracedError{err})
+	}
+
+	return newTracedError(err, nil)
 }
 
 // TraceTree returns the root of the n-ary traced error tree for err. Returns
