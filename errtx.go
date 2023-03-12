@@ -1,0 +1,137 @@
+// ErrTX is a library that offers error tracing capabilities,
+// all while prioritizing performance and minimalism.
+// ErrTX is a library that allows for error tracking while striving to maintain a high level of efficiency and minimalism.
+package errtx
+
+import (
+	"errors"
+	"fmt"
+	"runtime"
+	"strings"
+)
+
+type tracedError struct {
+	err   error
+	spans []errorSpan
+}
+
+type errorSpan struct {
+	msg string
+	loc string
+}
+
+func getLocation() string {
+	_, file, line, _ := runtime.Caller(2)
+	return fmt.Sprintf("\t%s:%d", file, line)
+}
+
+// Is returns whether the error is another error for use with errors.Is.
+func (e tracedError) Is(target error) bool {
+	return errors.Is(e.err, target)
+}
+
+// As returns the error as another error for use with errors.As.
+func (e tracedError) As(target interface{}) bool {
+	return errors.As(e.err, target)
+}
+
+// Unwrap returns the wrapped error for use with errors.Unwrap.
+func (e tracedError) Unwrap() error {
+	return errors.Unwrap(e.err)
+}
+
+// Error implements the error interface.
+func (e tracedError) Error() string {
+	return e.err.Error()
+}
+
+// Format implements fmt.Formatter.
+func (e tracedError) Format(f fmt.State, verb rune) {
+	if verb == 'v' && f.Flag('+') {
+		fmt.Fprint(f, strings.Join(repr(e), "\n"))
+		return
+	}
+	fmt.Fprintf(f, fmt.FormatString(f, verb), e.err)
+}
+
+func repr(te tracedError) []string {
+	locations := make([]string, 0, len(te.spans)+1)
+	for i := len(te.spans) - 1; i >= 0; i-- {
+		if te.spans[i].loc == "" {
+			locations = append(locations, te.spans[i].msg)
+			continue
+		}
+		if te.spans[i].msg == "" {
+			locations = append(locations, te.spans[i].loc)
+			continue
+		}
+		line := fmt.Sprintf("%s\n%s", te.spans[i].msg, te.spans[i].loc)
+		locations = append(locations, line)
+	}
+
+	return locations
+}
+
+func Newf(format string, a ...any) error {
+	err := fmt.Errorf(format, a...)
+	spans := []errorSpan{
+		{
+			msg: err.Error(),
+			loc: getLocation(),
+		},
+	}
+	return tracedError{err, spans}
+}
+
+func Wrapf(err error, format string, a ...any) error {
+	if err == nil {
+		return nil
+	}
+
+	newErr := fmt.Errorf(format, a...)
+
+	te, ok := err.(tracedError)
+	if ok {
+		te.spans = append(te.spans, errorSpan{
+			msg: newErr.Error(),
+			loc: getLocation(),
+		})
+		te.err = fmt.Errorf("%w - %w", newErr, te.err)
+		return te
+	}
+
+	spans := []errorSpan{
+		{
+			msg: err.Error(),
+			loc: "",
+		},
+		{
+			msg: newErr.Error(),
+			loc: getLocation(),
+		},
+	}
+	return tracedError{fmt.Errorf("%w - %w", newErr, err), spans}
+}
+
+func Trace(err error) error {
+	te, ok := err.(tracedError)
+	if ok {
+		te.spans = append(te.spans, errorSpan{
+			msg: "",
+			loc: getLocation(),
+		})
+		return te
+	}
+
+	spans := []errorSpan{
+		{
+			msg: err.Error(),
+			loc: "",
+		},
+		{
+			msg: "",
+			loc: getLocation(),
+		},
+	}
+	return tracedError{err, spans}
+}
