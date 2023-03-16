@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
-	"strings"
 )
 
 type tracedError struct {
@@ -22,7 +21,7 @@ type errorSpan struct {
 
 func getLocation() string {
 	_, file, line, _ := runtime.Caller(2)
-	return fmt.Sprintf("\t%s:%d", file, line)
+	return fmt.Sprintf("%s:%d", file, line)
 }
 
 // Is returns whether the error is another error for use with errors.Is.
@@ -48,28 +47,41 @@ func (e tracedError) Error() string {
 // Format implements fmt.Formatter.
 func (e tracedError) Format(f fmt.State, verb rune) {
 	if verb == 'v' && f.Flag('+') {
-		fmt.Fprint(f, strings.Join(repr(e), "\n"))
+		fmt.Fprint(f, e.traceRepr())
 		return
 	}
 	fmt.Fprintf(f, fmt.FormatString(f, verb), e.err)
 }
 
-func repr(te tracedError) []string {
-	locations := make([]string, 0, len(te.spans)+1)
-	for i := len(te.spans) - 1; i >= 0; i-- {
-		if te.spans[i].loc == "" {
-			locations = append(locations, te.spans[i].msg)
-			continue
-		}
-		if te.spans[i].msg == "" {
-			locations = append(locations, te.spans[i].loc)
-			continue
-		}
-		line := fmt.Sprintf("%s\n%s", te.spans[i].msg, te.spans[i].loc)
-		locations = append(locations, line)
+func (e tracedError) traceRepr() string {
+	if len(e.spans) == 0 {
+		return ""
 	}
 
-	return locations
+	lenRepr := 0
+	for _, span := range e.spans {
+		if span.msg != "" {
+			lenRepr += len(span.msg) + 1
+		}
+		if span.loc != "" {
+			lenRepr += len(span.loc) + 2
+		}
+	}
+
+	buffer := make([]byte, 0, lenRepr)
+	for i := len(e.spans) - 1; i >= 0; i-- {
+		if e.spans[i].msg != "" {
+			buffer = append(buffer, []byte(e.spans[i].msg)...)
+			buffer = append(buffer, '\n')
+		}
+		if e.spans[i].loc != "" {
+			buffer = append(buffer, '\t')
+			buffer = append(buffer, []byte(e.spans[i].loc)...)
+			buffer = append(buffer, '\n')
+		}
+	}
+
+	return string(buffer[:len(buffer)-1])
 }
 
 func Newf(format string, a ...any) error {
@@ -80,6 +92,7 @@ func Newf(format string, a ...any) error {
 			loc: getLocation(),
 		},
 	}
+
 	return tracedError{err, spans}
 }
 
@@ -87,7 +100,6 @@ func Wrapf(err error, format string, a ...any) error {
 	if err == nil {
 		return nil
 	}
-
 	newErr := fmt.Errorf(format, a...)
 
 	te, ok := err.(tracedError)
@@ -110,6 +122,7 @@ func Wrapf(err error, format string, a ...any) error {
 			loc: getLocation(),
 		},
 	}
+
 	return tracedError{fmt.Errorf("%w - %w", newErr, err), spans}
 }
 
@@ -133,5 +146,6 @@ func Trace(err error) error {
 			loc: getLocation(),
 		},
 	}
+
 	return tracedError{err, spans}
 }
