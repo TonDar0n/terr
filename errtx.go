@@ -97,9 +97,6 @@ func Newf(format string, a ...any) error {
 }
 
 func Wrapf(err error, format string, a ...any) error {
-	if err == nil {
-		return nil
-	}
 	newErr := fmt.Errorf(format, a...)
 
 	te, ok := err.(tracedError)
